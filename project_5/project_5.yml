@@ -1,0 +1,86 @@
+---
+- hosts: localhost
+  become: yes
+  
+  tasks:
+    - name: Install docker and git
+      package:
+        name: '{{ item }}'
+        state: present
+      loop:
+        - docker-ce
+        - git
+    
+    - name: Create directory for docker project
+      file:
+        path: /project
+        state: directory
+
+    - name: Copy all files to /project
+      copy:
+        src: '{{ item }}'
+        dest: /project/
+      loop:
+        - reverse_nginx
+        - mysql
+        - apache_php
+
+    - name: Add user to docker group
+      user:
+        name: user
+        group: docker
+    
+    - name: Restart and enable docker
+      systemd:
+        name: docker
+        state: restarted
+        enabled: yes
+
+    - name: Build images for docker
+      docker_image:
+        name: '{{ item.cont_name }}'
+        build:
+          path: '/project/{{ item.path }}'
+        source: build
+        state: present
+      loop:
+        - { cont_name: 'reverse_nginx', path: 'reverse_nginx'}
+        - { cont_name: 'mysql_db', path: 'mysql'}
+        - { cont_name: 'myapache2', path: 'apache_php'}
+    
+    - name: Start apache_php container
+      docker_container:
+        name: myapache2
+        image: myapache2
+        volumes:
+          - /project/apache_php/site:/var/www/html
+        network_mode: host
+        expose:
+          - 8080
+        state: started
+        cleanup: true
+      
+    - name: Start reverse_nginx container
+      docker_container:
+        name: reverse_nginx
+        image: reverse_nginx
+        network_mode: host
+        expose:
+          - 80
+          - 443
+        state: started
+        cleanup: true
+      
+    - name: Start mysql_db container
+      docker_container:
+        name: mysql_db
+        image: mysql_db
+        ports:
+          - 3306:3306
+        state: started
+        cleanup: true
+    
+    - name: Load SQL dump inside of mysql_db container
+      community.docker.docker_container_exec:
+        container: mysql_db
+        command: /bin/bash -c "mysql --port 3306 -u user -pP@ssw0rd test_db < /sql_dump"
